@@ -1,0 +1,23 @@
+# Credenciales y configuración local (URL, usuario y claves de ERPNext)
+.env
+
+# Generados por Python / pytest
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Entorno virtual
+venv/
+.venv/
+
+# Reportes y cobertura
+.coverage
+htmlcov/
+
+# Salidas de Playwright (trazas, capturas, videos)
+test-results/
+playwright-report/
+
+# Configuración personal de editores
+.idea/
+.vscode/
