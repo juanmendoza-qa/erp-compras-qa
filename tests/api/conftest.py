@@ -82,12 +82,9 @@ class Documentos:
         r.raise_for_status()
         return r.json()["message"]
 
-    def borrador_desde(self, metodo, pedido, cantidad=None):
-        """Pide al ERP el borrador de recepción o factura a partir del pedido."""
-        r = self.api.get(
-            f"{METODO}/erpnext.buying.doctype.purchase_order.purchase_order.{metodo}",
-            params={"source_name": pedido["name"]},
-        )
+    def borrador_desde(self, ruta, origen, cantidad=None):
+        """Pide al ERP el borrador de un documento a partir de otro (pedido o recepción)."""
+        r = self.api.get(f"{METODO}/{ruta}", params={"source_name": origen["name"]})
         r.raise_for_status()
         doc = {k: v for k, v in r.json()["message"].items()
                if k not in ("name", "__islocal", "__onload", "__unsaved")}
@@ -99,11 +96,20 @@ class Documentos:
         return doc
 
     def recibir(self, pedido, cantidad):
-        borrador = self.borrador_desde("make_purchase_receipt", pedido, cantidad)
+        ruta = "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt"
+        borrador = self.borrador_desde(ruta, pedido, cantidad)
         return self.presentar(self.guardar(borrador))
 
     def facturar(self, pedido, cantidad=None):
-        borrador = self.borrador_desde("make_purchase_invoice", pedido, cantidad)
+        """Factura directa desde el pedido, sin pasar por la recepción."""
+        ruta = "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice"
+        borrador = self.borrador_desde(ruta, pedido, cantidad)
+        return self.presentar(self.guardar(borrador))
+
+    def facturar_recepcion(self, recepcion, cantidad=None):
+        """Factura generada desde una recepción."""
+        ruta = "erpnext.stock.doctype.purchase_receipt.purchase_receipt.make_purchase_invoice"
+        borrador = self.borrador_desde(ruta, recepcion, cantidad)
         return self.presentar(self.guardar(borrador))
 
     def limpiar(self):
