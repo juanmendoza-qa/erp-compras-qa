@@ -8,7 +8,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_URL = os.environ["ERP_URL"]
-PO_URL = f"{BASE_URL}/api/resource/Purchase Order"
+RECURSO = f"{BASE_URL}/api/resource"
+METODO = f"{BASE_URL}/api/method"
+PO_URL = f"{RECURSO}/Purchase Order"
 
 
 def orden_base(cantidad=1, precio=100):
@@ -49,3 +51,80 @@ def orden(api):
     yield datos
     # Limpieza: corre aunque la prueba falle
     api.delete(f"{PO_URL}/{datos['name']}")
+
+class Documentos:
+    """Crea documentos del ERP durante un test y los deja limpios al terminar.
+
+    Un documento presentado (submitted) con asientos de stock o contables no se
+    puede borrar en ERPNext: la limpieza correcta es cancelarlo, y eso agrega
+    un asiento de reversión. Un borrador sí se borra.
+    """
+
+    def __init__(self, api):
+        self.api = api
+        self.creados = []  # (doctype, name), en orden de creación
+
+    def guardar(self, doc):
+        r = self.api.post(f"{METODO}/frappe.client.insert", json={"doc": doc})
+        r.raise_for_status()
+        datos = r.json()["message"]
+        self.creados.append((datos["doctype"], datos["name"]))
+        return datos
+
+    def presentar(self, datos):
+        """Devuelve la respuesta tal cual, para poder comprobar rechazos."""
+        return self.api.post(f"{METODO}/frappe.client.submit", json={"doc": datos})
+
+    def pedido(self, cantidad=10, precio=100):
+        orden = orden_base(cantidad=cantidad, precio=precio)
+        orden["doctype"] = "Purchase Order"
+        r = self.presentar(self.guardar(orden))
+        r.raise_for_status()
+        return r.json()["message"]
+
+    def borrador_desde(self, metodo, pedido, cantidad=None):
+        """Pide al ERP el borrador de recepción o factura a partir del pedido."""
+        r = self.api.get(
+            f"{METODO}/erpnext.buying.doctype.purchase_order.purchase_order.{metodo}",
+            params={"source_name": pedido["name"]},
+        )
+        r.raise_for_status()
+        doc = {k: v for k, v in r.json()["message"].items()
+               if k not in ("name", "__islocal", "__onload", "__unsaved")}
+        doc["items"] = [{k: v for k, v in it.items()
+                         if k not in ("name", "__islocal", "__unsaved")}
+                        for it in doc["items"]]
+        if cantidad is not None:
+            doc["items"][0]["qty"] = cantidad
+        return doc
+
+    def recibir(self, pedido, cantidad):
+        borrador = self.borrador_desde("make_purchase_receipt", pedido, cantidad)
+        return self.presentar(self.guardar(borrador))
+
+    def facturar(self, pedido, cantidad=None):
+        borrador = self.borrador_desde("make_purchase_invoice", pedido, cantidad)
+        return self.presentar(self.guardar(borrador))
+
+    def limpiar(self):
+        problemas = []
+        for doctype, nombre in reversed(self.creados):
+            r = self.api.get(f"{RECURSO}/{doctype}/{nombre}")
+            if not r.ok:
+                continue
+            estado = r.json()["data"]["docstatus"]
+            if estado == 1:
+                c = self.api.post(f"{METODO}/frappe.client.cancel",
+                                  json={"doctype": doctype, "name": nombre})
+                if not c.ok:
+                    problemas.append(f"no pude cancelar {doctype} {nombre}: {c.text[:200]}")
+            elif estado == 0:
+                self.api.delete(f"{RECURSO}/{doctype}/{nombre}")
+        assert not problemas, "; ".join(problemas)
+
+
+@pytest.fixture
+def docs(api):
+    d = Documentos(api)
+    yield d
+    d.limpiar()
