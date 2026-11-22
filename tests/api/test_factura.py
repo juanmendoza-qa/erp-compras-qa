@@ -48,6 +48,7 @@ def test_factura_directa_puede_superar_lo_recibido_con_la_configuracion_actual(d
     en "No" (Buying Settings, valor por defecto), el ERP deja facturar el pedido
     completo aunque solo se haya recibido una parte. Si el negocio exige recibir
     antes de pagar, ese ajuste debe ser "Yes", y este test debería invertirse.
+    Decisión pendiente: https://github.com/juanmendoza-qa/erp-compras-qa/issues/4
     """
     pedido = docs.pedido(cantidad=10)
     assert docs.recibir(pedido, 5).status_code == 200
