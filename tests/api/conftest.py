@@ -11,6 +11,9 @@ BASE_URL = os.environ["ERP_URL"]
 RECURSO = f"{BASE_URL}/api/resource"
 METODO = f"{BASE_URL}/api/method"
 PO_URL = f"{RECURSO}/Purchase Order"
+EMPRESA = "Compras QA SpA"
+BODEGA = "Stores - CQS"
+ARTICULO = "TORN-M8"
 
 
 def orden_base(cantidad=1, precio=100):
@@ -111,6 +114,24 @@ class Documentos:
         ruta = "erpnext.stock.doctype.purchase_receipt.purchase_receipt.make_purchase_invoice"
         borrador = self.borrador_desde(ruta, recepcion, cantidad)
         return self.presentar(self.guardar(borrador))
+
+    def stock_disponible(self):
+        r = self.api.get(
+            f"{METODO}/erpnext.stock.utils.get_stock_balance",
+            params={"item_code": ARTICULO, "warehouse": BODEGA},
+        )
+        r.raise_for_status()
+        return r.json()["message"]
+
+    def sacar(self, cantidad):
+        """Salida de stock (Material Issue). Devuelve la respuesta, aceptada o no."""
+        salida = {
+            "doctype": "Stock Entry",
+            "stock_entry_type": "Material Issue",
+            "company": EMPRESA,
+            "items": [{"item_code": ARTICULO, "qty": cantidad, "s_warehouse": BODEGA}],
+        }
+        return self.presentar(self.guardar(salida))
 
     def limpiar(self):
         problemas = []
