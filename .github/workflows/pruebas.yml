@@ -62,11 +62,30 @@ jobs:
           echo "ERP_URL=http://localhost:8080" >> "$GITHUB_ENV"
           rm seed_qa.env
 
-      - name: Comprobar que las llaves autentican
+      - name: Reiniciar el ERP para que todos los procesos lean la misma llave
         run: |
-          CODIGO=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $ERP_KEY:$ERP_SECRET" "$ERP_URL/api/resource/Purchase%20Order")
-          echo "Respuesta del ERP con las llaves de API: $CODIGO"
-          test "$CODIGO" = "200"
+          docker compose -f docker/erp.yml restart backend frontend
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/api/method/ping > /dev/null; then
+              echo "ERP de vuelta"
+              exit 0
+            fi
+            echo "Esperando al ERP ($i/30)"
+            sleep 5
+          done
+          docker compose -f docker/erp.yml logs --tail=50 backend frontend
+          exit 1
+
+      - name: Comprobar que las llaves autentican en todas las respuestas
+        run: |
+          for i in $(seq 1 30); do
+            CODIGO=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $ERP_KEY:$ERP_SECRET" "$ERP_URL/api/resource/Purchase%20Order")
+            if [ "$CODIGO" != "200" ]; then
+              echo "Intento $i: el ERP respondió $CODIGO"
+              exit 1
+            fi
+          done
+          echo "30 de 30 respuestas con código 200"
 
       - name: Pruebas de API
         run: pytest tests/api --junitxml=reports/junit.xml
