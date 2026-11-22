@@ -1,0 +1,103 @@
+name: pruebas
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Levantar el ERP
+        run: docker compose -f docker/erp.yml up -d
+
+      - name: Esperar a que el ERP termine de instalarse
+        run: |
+          for i in $(seq 1 90); do
+            ID=$(docker compose -f docker/erp.yml ps -a -q create-site)
+            ESTADO=$(docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$ID" 2>/dev/null || echo "sin-contenedor")
+            if [ "$ESTADO" = "exited 0" ] && curl -sf http://localhost:8080/api/method/ping; then
+              echo
+              echo "ERP listo"
+              exit 0
+            fi
+            case "$ESTADO" in
+              exited*)
+                if [ "$ESTADO" != "exited 0" ]; then
+                  echo "create-site terminó con error: $ESTADO"
+                  docker compose -f docker/erp.yml logs create-site
+                  exit 1
+                fi
+                ;;
+            esac
+            echo "Esperando al ERP ($i/90): create-site = $ESTADO"
+            sleep 10
+          done
+          docker compose -f docker/erp.yml logs create-site
+          exit 1
+
+      - name: Fijar la llave de cifrado del sitio
+        run: docker compose -f docker/erp.yml exec -T backend bench --site frontend execute frappe.utils.password.get_encryption_key > /dev/null
+
+      - name: Preparar datos de prueba y llaves de API
+        run: |
+          docker compose -f docker/erp.yml cp scripts/seed_erp.py backend:/home/frappe/frappe-bench/apps/frappe/frappe/seed_qa.py
+          docker compose -f docker/erp.yml exec -T backend bench --site frontend execute frappe.seed_qa.run
+          docker compose -f docker/erp.yml exec -T backend cat /tmp/seed_qa.env > seed_qa.env
+          while IFS='=' read -r nombre valor; do
+            echo "::add-mask::$valor"
+            echo "$nombre=$valor" >> "$GITHUB_ENV"
+          done < seed_qa.env
+          echo "ERP_URL=http://localhost:8080" >> "$GITHUB_ENV"
+          rm seed_qa.env
+
+      - name: Reiniciar el ERP para que todos los procesos lean la misma llave
+        run: |
+          docker compose -f docker/erp.yml restart backend frontend
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/api/method/ping > /dev/null; then
+              echo "ERP de vuelta"
+              exit 0
+            fi
+            echo "Esperando al ERP ($i/30)"
+            sleep 5
+          done
+          docker compose -f docker/erp.yml logs --tail=50 backend frontend
+          exit 1
+
+      - name: Comprobar que las llaves autentican en todas las respuestas
+        run: |
+          for i in $(seq 1 30); do
+            CODIGO=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $ERP_KEY:$ERP_SECRET" "$ERP_URL/api/resource/Purchase%20Order")
+            if [ "$CODIGO" != "200" ]; then
+              echo "Intento $i: el ERP respondió $CODIGO"
+              exit 1
+            fi
+          done
+          echo "30 de 30 respuestas con código 200"
+
+      - name: Pruebas de API
+        run: pytest tests/api --junitxml=reports/junit.xml
+
+      - name: Registros del ERP si algo falló
+        if: failure()
+        run: docker compose -f docker/erp.yml logs --tail=80 backend
+
+      - name: Publicar reporte
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: reporte
+          path: reports/
+          if-no-files-found: ignore

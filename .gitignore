@@ -21,3 +21,4 @@ playwright-report/
 # Configuración personal de editores
 .idea/
 .vscode/
+reports/
