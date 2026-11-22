@@ -8,9 +8,16 @@ on:
 jobs:
   api:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
 
       - name: Levantar el ERP
         run: docker compose -f docker/erp.yml up -d
@@ -28,3 +35,30 @@ jobs:
           done
           docker compose -f docker/erp.yml logs create-site
           exit 1
+
+      - name: Preparar datos de prueba y llaves de API
+        run: |
+          docker compose -f docker/erp.yml cp scripts/seed_erp.py backend:/home/frappe/frappe-bench/apps/frappe/frappe/seed_qa.py
+          docker compose -f docker/erp.yml exec -T backend bench --site frontend execute frappe.seed_qa.run
+          docker compose -f docker/erp.yml exec -T backend cat /tmp/seed_qa.env > seed_qa.env
+          while IFS='=' read -r nombre valor; do
+            echo "::add-mask::$valor"
+            echo "$nombre=$valor" >> "$GITHUB_ENV"
+          done < seed_qa.env
+          echo "ERP_URL=http://localhost:8080" >> "$GITHUB_ENV"
+          rm seed_qa.env
+
+      - name: Pruebas de API
+        run: pytest tests/api --junitxml=reports/junit.xml
+
+      - name: Registros del ERP si algo falló
+        if: failure()
+        run: docker compose -f docker/erp.yml logs --tail=80 backend
+
+      - name: Publicar reporte
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: reporte
+          path: reports/
+          if-no-files-found: ignore
