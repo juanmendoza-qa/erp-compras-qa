@@ -59,6 +59,11 @@ def crear_llaves():
     secreto = generate_keys("Administrator")["api_secret"]
     frappe.db.commit()
     clave = frappe.db.get_value("User", "Administrator", "api_key")
+    from frappe.utils.password import get_decrypted_password
+
+    guardado = get_decrypted_password("User", "Administrator", "api_secret", raise_exception=False)
+    if guardado != secreto:
+        raise RuntimeError("El secreto de la llave de API no se puede descifrar")
     with open(SALIDA, "w") as archivo:
         archivo.write(f"ERP_KEY={clave}\nERP_SECRET={secreto}\n")
     print("Llaves de API generadas")

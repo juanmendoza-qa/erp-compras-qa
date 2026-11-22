@@ -47,6 +47,9 @@ jobs:
           docker compose -f docker/erp.yml logs create-site
           exit 1
 
+      - name: Fijar la llave de cifrado del sitio
+        run: docker compose -f docker/erp.yml exec -T backend bench --site frontend execute frappe.utils.password.get_encryption_key > /dev/null
+
       - name: Preparar datos de prueba y llaves de API
         run: |
           docker compose -f docker/erp.yml cp scripts/seed_erp.py backend:/home/frappe/frappe-bench/apps/frappe/frappe/seed_qa.py
@@ -58,6 +61,12 @@ jobs:
           done < seed_qa.env
           echo "ERP_URL=http://localhost:8080" >> "$GITHUB_ENV"
           rm seed_qa.env
+
+      - name: Comprobar que las llaves autentican
+        run: |
+          CODIGO=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $ERP_KEY:$ERP_SECRET" "$ERP_URL/api/resource/Purchase%20Order")
+          echo "Respuesta del ERP con las llaves de API: $CODIGO"
+          test "$CODIGO" = "200"
 
       - name: Pruebas de API
         run: pytest tests/api --junitxml=reports/junit.xml

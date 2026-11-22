@@ -18,8 +18,10 @@ def test_cantidad_y_precio_de_la_orden(api, cantidad, precio, valida):
         if valida:
             assert r.status_code == 200, r.text
         else:
-            # Un dato inválido debe dar error del pedido (4xx), no caída del servidor (5xx)
+            # Un dato inválido debe dar error del pedido (4xx), no caída del servidor (5xx).
+            # 401 y 403 son fallas de autenticación, no un rechazo del dato.
             assert 400 <= r.status_code < 500, f"{r.status_code}: {r.text}"
+            assert r.status_code not in (401, 403), f"autenticación: {r.text}"
     finally:
         # Si el ERP aceptó una orden que debía rechazar, no la dejamos viva
         if r.ok:
